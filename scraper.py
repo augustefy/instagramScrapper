@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 
 from bench import Bench
@@ -61,18 +60,17 @@ class InstagramScraper:
                     ),
                     viewport={"width": 1280, "height": 900},
                 )
+                # Opt 1 : routing bloquant au niveau du context → s'applique à tous les tabs
+                await context.route("**/*", self._route_handler)
                 logger.info(f"✓ Chromium initialisé ({WORKERS} workers parallèles, images/médias/fonts bloqués)")
 
             page = await context.new_page()
-            await page.route("**/*", self._route_handler)
 
             with self.bench.timer("page_load"):
                 logger.info(f"Navigation vers {url}")
                 await page.goto(url, wait_until="domcontentloaded")
                 logger.info("Attente des posts...")
                 await self._dismiss_popup(page)
-                # Attendre les vrais posts (pattern /username/p/CODE/ ou /username/reel/CODE/)
-                # wait_for_selector("a[href*='/p/']") matche aussi /privacy — on utilise evaluate()
                 await self._wait_for_post_links(page, timeout=15000)
 
             hrefs = await self._collect_n_hrefs(page, n)
@@ -80,8 +78,16 @@ class InstagramScraper:
 
             logger.info(f"Début du scraping parallèle : {len(hrefs)} posts ({WORKERS} workers)")
 
-            posts: list[PostData] = []
-            scraped: dict[str, PostData] = {}  # href → PostData
+            # Opt 4 : pool de tabs pré-créés réutilisés entre les posts
+            pool_size = min(WORKERS, len(hrefs))
+            tab_pool: asyncio.Queue[Page] = asyncio.Queue()
+            pooled_tabs: list[Page] = []
+            for _ in range(pool_size):
+                tab = await context.new_page()
+                pooled_tabs.append(tab)
+                await tab_pool.put(tab)
+
+            scraped: dict[str, PostData] = {}
             pending = list(hrefs)
             attempt = 0
             MAX_ATTEMPTS = 3
@@ -92,8 +98,7 @@ class InstagramScraper:
                     if attempt > 1:
                         logger.info(f"  Retry #{attempt} — {len(pending)} post(s) à relancer")
 
-                    semaphore = asyncio.Semaphore(WORKERS)
-                    tasks = [self._scrape_post(context, href, semaphore) for href in pending]
+                    tasks = [self._scrape_post(href, tab_pool) for href in pending]
                     results = await asyncio.gather(*tasks)
 
                     failed = []
@@ -108,6 +113,9 @@ class InstagramScraper:
 
                 if pending:
                     logger.warning(f"  {len(pending)} post(s) en échec après {MAX_ATTEMPTS} tentatives")
+
+            for tab in pooled_tabs:
+                await tab.close()
 
             # Remet dans l'ordre d'apparition sur la page
             posts = [scraped[href] for href in hrefs if href in scraped]
@@ -193,48 +201,34 @@ class InstagramScraper:
     # Scraping d'un post (appelé en parallèle)
     # ------------------------------------------------------------------
 
-    async def _scrape_post(self, context: BrowserContext, href: str, semaphore: asyncio.Semaphore) -> Optional[PostData]:
+    async def _scrape_post(self, href: str, tab_pool: "asyncio.Queue[Page]") -> Optional[PostData]:
         post_url = f"{BASE_URL}{href}"
-        async with semaphore:
-            tab = None
-            try:
-                tab = await context.new_page()
-                await tab.route("**/*", self._route_handler)
-                await tab.goto(post_url, wait_until="domcontentloaded")
-                await tab.wait_for_selector("time[datetime]", timeout=10000)
+        tab = await tab_pool.get()
+        try:
+            await tab.goto(post_url, wait_until="domcontentloaded")
+            await tab.wait_for_selector("time[datetime]", timeout=10000)
 
-                for selector in ["[aria-label='Fermer']", "[aria-label='Close']"]:
-                    try:
-                        await tab.click(selector, timeout=1500)
-                        break
-                    except PlaywrightTimeout:
-                        pass
+            # Opt 3 : extraction directe via JS — évite la sérialisation HTML + BeautifulSoup
+            data = await tab.evaluate("""() => {
+                const time = document.querySelector('time[datetime]');
+                const captionSpan = document.querySelector('span.x126k92a');
+                const meta = document.querySelector('meta[property="og:description"]');
+                return {
+                    timestamp: time ? time.getAttribute('datetime') : '',
+                    caption: captionSpan
+                        ? captionSpan.innerText.trim()
+                        : (meta ? meta.getAttribute('content') : '')
+                };
+            }""")
 
-                soup = BeautifulSoup(await tab.content(), "lxml")
+            return PostData(url=post_url, caption=data["caption"], timestamp=data["timestamp"])
 
-                caption = ""
-                caption_tag = soup.find("span", class_=lambda c: c and "x126k92a" in c)
-                if caption_tag:
-                    caption = caption_tag.get_text(strip=True)
-                if not caption:
-                    meta = soup.find("meta", {"property": "og:description"})
-                    if meta:
-                        caption = meta.get("content", "")
-
-                timestamp = ""
-                time_tag = soup.find("time", {"datetime": True, "class": "xdwrcjd"}) \
-                           or soup.find("time", {"datetime": True})
-                if time_tag:
-                    timestamp = time_tag.get("datetime", "")
-
-                return PostData(url=post_url, caption=caption, timestamp=timestamp)
-
-            except Exception as e:
-                logger.error(f"Erreur sur {post_url} : {e}")
-                return None
-            finally:
-                if tab:
-                    await tab.close()
+        except Exception as e:
+            logger.error(f"Erreur sur {post_url} : {e}")
+            return None
+        finally:
+            # Opt 4 : remet le tab dans le pool plutôt que de le détruire
+            await tab_pool.put(tab)
 
     # ------------------------------------------------------------------
     # Helpers
