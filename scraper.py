@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 
 from bench import Bench
@@ -70,8 +70,10 @@ class InstagramScraper:
                 logger.info(f"Navigation vers {url}")
                 await page.goto(url, wait_until="domcontentloaded")
                 logger.info("Attente des posts...")
-                await page.wait_for_selector("a[href*='/p/']", timeout=15000)
                 await self._dismiss_popup(page)
+                # Attendre les vrais posts (pattern /username/p/CODE/ ou /username/reel/CODE/)
+                # wait_for_selector("a[href*='/p/']") matche aussi /privacy — on utilise evaluate()
+                await self._wait_for_post_links(page, timeout=15000)
 
             hrefs = await self._collect_n_hrefs(page, n)
             await page.close()
@@ -79,24 +81,39 @@ class InstagramScraper:
             logger.info(f"Début du scraping parallèle : {len(hrefs)} posts ({WORKERS} workers)")
 
             posts: list[PostData] = []
+            scraped: dict[str, PostData] = {}  # href → PostData
+            pending = list(hrefs)
+            attempt = 0
+            MAX_ATTEMPTS = 3
+
             with self.bench.timer("scrape_all_posts"):
-                semaphore = asyncio.Semaphore(WORKERS)
-                tasks = [
-                    self._scrape_post(context, href, semaphore)
-                    for href in hrefs
-                ]
-                results = await asyncio.gather(*tasks)
-                for post in results:
-                    if post:
-                        posts.append(post)
-                        logger.info(f"  [{len(posts)}/{len(hrefs)}] {post.url}")
+                while pending and attempt < MAX_ATTEMPTS:
+                    attempt += 1
+                    if attempt > 1:
+                        logger.info(f"  Retry #{attempt} — {len(pending)} post(s) à relancer")
+
+                    semaphore = asyncio.Semaphore(WORKERS)
+                    tasks = [self._scrape_post(context, href, semaphore) for href in pending]
+                    results = await asyncio.gather(*tasks)
+
+                    failed = []
+                    for href, post in zip(pending, results):
+                        if post:
+                            scraped[href] = post
+                            logger.info(f"  [{len(scraped)}/{len(hrefs)}] {post.url}")
+                        else:
+                            failed.append(href)
+
+                    pending = failed
+
+                if pending:
+                    logger.warning(f"  {len(pending)} post(s) en échec après {MAX_ATTEMPTS} tentatives")
+
+            # Remet dans l'ordre d'apparition sur la page
+            posts = [scraped[href] for href in hrefs if href in scraped]
 
             await context.close()
             await browser.close()
-
-        # Remet dans l'ordre d'apparition sur la page
-        href_order = {href: i for i, href in enumerate(hrefs)}
-        posts.sort(key=lambda p: href_order.get(p.url.replace(BASE_URL, ""), 999))
 
         logger.info(f"✓ Scraping terminé : {len(posts)} posts récupérés")
         return posts
@@ -156,25 +173,21 @@ class InstagramScraper:
     # ------------------------------------------------------------------
 
     async def _collect_post_links(self, page: Page) -> list[tuple[str, bool]]:
-        soup = BeautifulSoup(await page.content(), "lxml")
-        results: list[tuple[str, bool]] = []
-        for link in soup.select("a[href*='/p/']"):
-            href = link.get("href", "")
-            if href:
-                results.append((href, self._is_pinned(link)))
-        return results
+        raw = await page.evaluate(
+            """() => Array.from(document.querySelectorAll('a[href]'))
+                .filter(a => /^\\/.+\\/(p|reel)\\/[A-Za-z0-9_-]+/.test(a.getAttribute('href')))
+                .map(a => {
+                    const href = a.getAttribute('href');
+                    // Cherche un SVG "pin" uniquement dans le conteneur direct du lien (pas la grille entière)
+                    const cell = a.closest('li, article, div[class]') || a.parentElement;
+                    const pinned = !!(cell && Array.from(cell.children).some(
+                        child => child.querySelector && child.querySelector('svg[aria-label*="pin"], svg[aria-label*="Pin"]')
+                    ));
+                    return [href, pinned];
+                })"""
+        )
 
-    def _is_pinned(self, link_tag: Tag) -> bool:
-        container = link_tag
-        for _ in range(5):
-            parent = container.parent
-            if parent is None:
-                break
-            container = parent
-        for svg in container.find_all("svg"):
-            if "pin" in svg.get("aria-label", "").lower():
-                return True
-        return False
+        return [(href, pinned) for href, pinned in raw]
 
     # ------------------------------------------------------------------
     # Scraping d'un post (appelé en parallèle)
@@ -228,23 +241,58 @@ class InstagramScraper:
     # ------------------------------------------------------------------
 
     async def _dismiss_popup(self, page: Page):
-        for label, selector in [
-            ("cookies", "button:has-text('Allow'), button:has-text('Autoriser'), button:has-text('Accept')"),
-            ("login prompt", "button:has-text('Not Now'), button:has-text('Plus tard')"),
-        ]:
-            try:
-                await page.click(selector, timeout=3000)
-                logger.info(f"  → Fermeture du popup ({label})")
-            except PlaywrightTimeout:
-                pass
+        cookie_selector = (
+            "button:has-text('Allow all cookies'), "
+            "button:has-text('Tout accepter'), "
+            "button:has-text('Allow'), "
+            "button:has-text('Autoriser'), "
+            "button:has-text('Accept'), "
+            "button:has-text('Decline optional cookies'), "
+            "button:has-text('Refuser les cookies optionnels')"
+        )
+        login_selector = "button:has-text('Not Now'), button:has-text('Plus tard')"
+
+        # Boucle pour gérer plusieurs popups successifs (Instagram en affiche 2)
+        for attempt in range(4):
+            clicked = False
+            for label, selector in [("cookies", cookie_selector), ("login", login_selector)]:
+                try:
+                    await page.click(selector, timeout=2000)
+                    logger.info(f"  → Fermeture du popup ({label}, round {attempt + 1})")
+                    await asyncio.sleep(0.8)
+                    clicked = True
+                    break
+                except PlaywrightTimeout:
+                    pass
+            if not clicked:
+                break
+
+    async def _wait_for_post_links(self, page: Page, timeout: int = 15000):
+        """Attend que de vrais liens de posts soient présents dans le DOM.
+        Utilise un polling evaluate() pour éviter les faux matchs CSS sur /privacy."""
+        deadline = asyncio.get_event_loop().time() + timeout / 1000
+        while asyncio.get_event_loop().time() < deadline:
+            count = await page.evaluate(
+                """() => Array.from(document.querySelectorAll('a[href]'))
+                    .filter(a => /^\\/.+\\/(p|reel)\\/[A-Za-z0-9_-]+/.test(a.getAttribute('href')))
+                    .length"""
+            )
+            if count > 0:
+                logger.info(f"  {count} post(s) détectés dans le DOM")
+                return
+            await asyncio.sleep(0.3)
+        logger.warning("Timeout : aucun post trouvé après attente")
+        await page.screenshot(path="debug_screenshot.png", full_page=False)
+        logger.warning("Screenshot → debug_screenshot.png")
 
     async def _scroll_down(self, page: Page) -> bool:
         prev = await page.evaluate("document.body.scrollHeight")
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        try:
-            await page.wait_for_function(
-                f"document.body.scrollHeight > {prev}", timeout=4000
-            )
-        except PlaywrightTimeout:
-            pass
-        return await page.evaluate("document.body.scrollHeight") > prev
+        # wait_for_function avec une string viole la CSP d'Instagram (unsafe-eval bloqué)
+        # → polling manuel via evaluate()
+        deadline = asyncio.get_event_loop().time() + 4.0
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(0.2)
+            if await page.evaluate("document.body.scrollHeight") > prev:
+                return True
+        return False
