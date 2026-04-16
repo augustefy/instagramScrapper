@@ -1,14 +1,17 @@
 import asyncio
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Optional
 
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 
 from bench import Bench
-from config import (
+from exceptions import PageLoadError, SelectorsOutdatedError
+from logging_setup import setup_logging
+from scrapers.base import BaseScraper, SocialPost
+from scrapers.instagram.config import (
     BASE_URL,
     BLOCKED_RESOURCE_TYPES,
     WORKERS,
@@ -24,82 +27,43 @@ from config import (
     VIEWPORT,
     SELECTORS,
 )
-from exceptions import (
-    PageLoadError,
-    PostDataError,
-    SelectorError,
-    SelectorsOutdatedError,
-    PopupDismissError,
-    ScrollError,
-)
-from logging_setup import setup_logging
-from validators import validate_instagram_url, validate_post_count
+from scrapers.instagram.validators import validate_instagram_url, validate_post_count
 
 logger = setup_logging(__name__)
 
+PLATFORM = "instagram"
 
 
-@dataclass
-class PostData:
-    url: str
-    caption: str = ""
-    timestamp: str = ""
-    likes_count: int = 0
-    comments_count: int = 0
-    media_type: str = ""  # image, video, carousel, reel
-    user_followers: int = 0
-
-
-class InstagramScraper:
+class InstagramScraper(BaseScraper):
     def __init__(self, headless: bool = True, bench: Optional[Bench] = None):
         self.bench = bench or Bench()
         self.headless = headless
-        self._pw = None
         self._browser: Optional[Browser] = None
         self._context: Optional[BrowserContext] = None
-        self.page: Optional[Page] = None
 
     # ------------------------------------------------------------------
     # Public entry point (sync wrapper)
     # ------------------------------------------------------------------
 
-    def scrape(self, url: str, n: int) -> list[PostData]:
-        """Scrape n posts d'un profil Instagram.
-
-        Args:
-            url: URL du profil Instagram (ex: https://www.instagram.com/username)
-            n: Nombre de posts à scraper
-
-        Returns:
-            Liste de PostData
-
-        Raises:
-            ValidationError: Si les inputs sont invalides
-            PageLoadError: Si impossible de charger le profil
-            PostDataError: Si erreur lors du scraping
-        """
-        # Valide les inputs
+    def scrape(self, url: str, n: int) -> list[SocialPost]:
         url = validate_instagram_url(url)
         n = validate_post_count(n)
 
         logger.info(f"Scraping démarré", extra={"url": url, "target_count": n})
         posts = asyncio.run(self._scrape_async(url, n))
-        # Affiche le JSON brut retourné
-        print("\n" + "="*60)
-        print("OUTPUT JSON DU SCRAPER:")
-        print("="*60)
-        print(json.dumps([asdict(p) for p in posts], ensure_ascii=False, indent=2))
-        print("="*60 + "\n")
-        return posts
 
-    def close(self):
-        pass  # cleanup handled inside _scrape_async
+        print("\n" + "=" * 60)
+        print("OUTPUT JSON DU SCRAPER:")
+        print("=" * 60)
+        print(json.dumps([asdict(p) for p in posts], ensure_ascii=False, indent=2))
+        print("=" * 60 + "\n")
+        return posts
 
     # ------------------------------------------------------------------
     # Async core
     # ------------------------------------------------------------------
 
-    async def _scrape_async(self, url: str, n: int) -> list[PostData]:
+    async def _scrape_async(self, url: str, n: int) -> list[SocialPost]:
         async with async_playwright() as pw:
             with self.bench.timer("driver_init"):
                 browser = await pw.chromium.launch(headless=self.headless)
@@ -107,9 +71,8 @@ class InstagramScraper:
                     user_agent=USER_AGENT,
                     viewport=VIEWPORT,
                 )
-                # Opt 1 : routing bloquant au niveau du context → s'applique à tous les tabs
                 await context.route("**/*", self._route_handler)
-                logger.info(f"✓ Chromium initialisé", extra={"workers": WORKERS, "blocked_resources": list(BLOCKED_RESOURCE_TYPES)})
+                logger.info("✓ Chromium initialisé", extra={"workers": WORKERS, "blocked_resources": list(BLOCKED_RESOURCE_TYPES)})
 
             page = await context.new_page()
 
@@ -134,7 +97,6 @@ class InstagramScraper:
 
             logger.info(f"Début du scraping parallèle : {len(hrefs)} posts ({WORKERS} workers)")
 
-            # Opt 4 : pool de tabs pré-créés réutilisés entre les posts
             pool_size = min(WORKERS, len(hrefs))
             tab_pool: asyncio.Queue[Page] = asyncio.Queue()
             pooled_tabs: list[Page] = []
@@ -143,7 +105,7 @@ class InstagramScraper:
                 pooled_tabs.append(tab)
                 await tab_pool.put(tab)
 
-            scraped: dict[str, PostData] = {}
+            scraped: dict[str, SocialPost] = {}
             pending = list(hrefs)
             attempt = 0
 
@@ -172,7 +134,6 @@ class InstagramScraper:
             for tab in pooled_tabs:
                 await tab.close()
 
-            # Remet dans l'ordre d'apparition sur la page
             posts = [scraped[href] for href in hrefs if href in scraped]
 
             await context.close()
@@ -199,20 +160,13 @@ class InstagramScraper:
     # ------------------------------------------------------------------
 
     async def _get_user_followers(self, page: Page) -> int:
-        """Récupère le nombre de followers de l'utilisateur depuis le profil.
-
-        Returns:
-            Nombre de followers (0 si impossible à extraire)
-        """
         try:
             followers = await page.evaluate(
                 """() => {
-                    // Cherche les éléments contenant le nombre de followers
                     const links = document.querySelectorAll('a[href*="/followers"]');
                     for (const link of links) {
                         const text = link.innerText;
                         if (text) {
-                            // Formats: "1.5M", "1,234", "123K", "123"
                             const cleaned = text.match(/[\\d.]+/)?.[0] || "";
                             let num = parseFloat(cleaned);
                             if (text.includes("M")) num *= 1000000;
@@ -220,8 +174,6 @@ class InstagramScraper:
                             if (num > 0) return Math.floor(num);
                         }
                     }
-
-                    // Fallback: cherche dans tous les éléments qui pourraient contenir le nombre de followers
                     const allText = document.body.innerText;
                     const lines = allText.split('\\n');
                     for (let i = 0; i < lines.length; i++) {
@@ -289,11 +241,6 @@ class InstagramScraper:
     # ------------------------------------------------------------------
 
     async def _collect_post_links(self, page: Page) -> list[tuple[str, bool]]:
-        """Collecte les liens des posts d'une page Instagram.
-
-        Returns:
-            Liste de tuples (href, is_pinned)
-        """
         try:
             raw = await page.evaluate(
                 """() => Array.from(document.querySelectorAll('a[href]'))
@@ -316,21 +263,10 @@ class InstagramScraper:
     # Scraping d'un post (appelé en parallèle)
     # ------------------------------------------------------------------
 
-    async def _scrape_post(self, href: str, tab_pool: "asyncio.Queue[Page]", user_followers: int) -> Optional[PostData]:
-        """Scrape les données d'un post.
-
-        Args:
-            href: URL relative du post (ex: /username/p/ABC123/)
-            tab_pool: Queue de tabs à réutiliser
-            user_followers: Nombre de followers de l'utilisateur
-
-        Returns:
-            PostData ou None si erreur
-        """
+    async def _scrape_post(self, href: str, tab_pool: "asyncio.Queue[Page]", user_followers: int) -> Optional[SocialPost]:
         post_url = f"{BASE_URL}{href}"
         tab = await tab_pool.get()
 
-        # Opt 5 : capture des données via l'API Instagram interceptée
         api_data: dict = {}
 
         async def on_response(response):
@@ -348,7 +284,6 @@ class InstagramScraper:
                         api_data["likes_count"] = item.get("like_count", 0)
                         api_data["comments_count"] = item.get("comment_count", 0)
 
-                        # Détermine le type de média
                         if item.get("carousel_media_count"):
                             api_data["media_type"] = "carousel"
                         elif item.get("video_duration") or item.get("product_type") == "clips":
@@ -356,9 +291,9 @@ class InstagramScraper:
                         else:
                             api_data["media_type"] = "image"
 
-                        logger.debug(f"API data captured", extra={"api_data": api_data})
+                        logger.debug("API data captured", extra={"api_data": api_data})
                 except Exception as e:
-                    logger.debug(f"Erreur parsing API response", extra={"error": str(e), "url": response.url})
+                    logger.debug("Erreur parsing API response", extra={"error": str(e), "url": response.url})
 
         tab.on("response", on_response)
         try:
@@ -367,7 +302,8 @@ class InstagramScraper:
             await asyncio.sleep(RESPONSE_HANDLER_WAIT)
 
             if api_data:
-                return PostData(
+                return SocialPost(
+                    platform=PLATFORM,
                     url=post_url,
                     caption=api_data.get("caption", ""),
                     timestamp=api_data.get("timestamp", ""),
@@ -383,12 +319,9 @@ class InstagramScraper:
                 const captionSpan = document.querySelector("{SELECTORS.POST_CAPTION_SPAN}");
                 const meta = document.querySelector("{SELECTORS.POST_META_DESCRIPTION}");
 
-                // Fonction utilitaire pour parser les nombres (1.5M, 1,5M, 12K, 12,8K etc)
                 function parseNumber(text) {{
                     if (!text) return 0;
-                    // Remplace virgule française par point
                     let normalized = text.replace(/,/g, '.');
-                    // Extrait le nombre + le suffixe M/K
                     const match = normalized.match(/([\\d.]+)\\s*([MK])?/i);
                     if (!match) return 0;
                     let num = parseFloat(match[1]);
@@ -399,102 +332,72 @@ class InstagramScraper:
                     return Math.floor(num);
                 }}
 
-                // Extraction des likes et commentaires (les views viennent des réponses réseau)
                 let likes = 0;
                 let comments = 0;
                 let mediaType = "";
 
-                // STRATÉGIE 1 : Cherche "Afficher les X commentaires" pour la vraie valeur
                 const bodyText = document.body.innerText || "";
                 const afficherMatch = bodyText.match(/Afficher les ([\\d\\s]+) commentaires/i);
                 if (afficherMatch) {{
                     comments = parseInt(afficherMatch[1].replace(/\\s/g, ''), 10) || 0;
                 }}
 
-                // STRATÉGIE 2 : Cherche les blocs d'actions (likes/comments/shares)
-                // Ces zones contiennent généralement les nombres formatés
                 const allDivs = document.querySelectorAll('div, button, [role="button"], span');
                 for (const el of allDivs) {{
                     const text = (el.innerText || el.textContent || "").trim();
                     const lower = text.toLowerCase();
-
-                    // Pattern: "494,1 K" ou "494.1K"
                     const numberMatch = text.match(/^([\\d.,]+\\s*[MK]?)$/i);
                     if (numberMatch) {{
                         const value = parseNumber(numberMatch[1]);
-                        // Heuristique : dans une zone d'action, le premier nombre = likes
-                        // Le suivant = comments (généralement plus petit)
                         if (value > 0) {{
-                            if (!likes || value > likes * 0.5) {{
-                                likes = value;
-                            }} else if (!comments) {{
-                                comments = value;
-                            }}
+                            if (!likes || value > likes * 0.5) likes = value;
+                            else if (!comments) comments = value;
                         }}
                     }}
-
-                    // Cherche des patterns avec texte + nombre
                     if (lower.includes('like') && !lower.includes('unlike')) {{
                         const match = text.match(/([\\d.,]+[MK]?)/);
-                        if (match) {{
-                            const val = parseNumber(match[1]);
-                            if (val > 0) likes = val;
-                        }}
+                        if (match) {{ const val = parseNumber(match[1]); if (val > 0) likes = val; }}
                     }}
                 }}
 
-                // STRATÉGIE 3 : Cherche dans aria-label
                 const ariaElements = document.querySelectorAll('[aria-label]');
                 for (const el of ariaElements) {{
                     const label = (el.getAttribute('aria-label') || "").toLowerCase();
-
                     if (label.includes('like')) {{
                         const match = label.match(/([\\d.,]+[MK]?)/);
-                        if (match) {{
-                            const val = parseNumber(match[1]);
-                            if (val > 0 && val > likes) likes = val;
-                        }}
+                        if (match) {{ const val = parseNumber(match[1]); if (val > 0 && val > likes) likes = val; }}
                     }}
                     if (label.includes('comment') && comments === 0) {{
                         const match = label.match(/([\\d.,]+[MK]?)/);
-                        if (match) {{
-                            const val = parseNumber(match[1]);
-                            if (val > 0) comments = val;
-                        }}
+                        if (match) {{ const val = parseNumber(match[1]); if (val > 0) comments = val; }}
                     }}
                 }}
 
-                // Détecte le type de média
                 const videoEl = document.querySelector('video');
                 const isCarousel = document.querySelector('[aria-label*="carousel"], [aria-label*="Carousel"]') ||
                                  document.querySelector('[role="tablist"]');
-
                 if (videoEl) {{
-                    mediaType = "video";
-                    // Cherche si c'est un reel
-                    if (document.querySelector('svg[aria-label*="Reel"], svg[aria-label*="reel"]')) {{
-                        mediaType = "reel";
-                    }}
+                    mediaType = document.querySelector('svg[aria-label*="Reel"], svg[aria-label*="reel"]') ? "reel" : "video";
                 }} else if (isCarousel) {{
                     mediaType = "carousel";
                 }} else {{
                     mediaType = "image";
                 }}
 
-
-                // Debug : retourne aussi le texte brut pour logs
                 return {{
                     timestamp: time ? time.getAttribute("datetime") : "",
-                    caption: captionSpan
-                        ? captionSpan.innerText.trim()
-                        : (meta ? meta.getAttribute("content") : ""),
+                    caption: captionSpan ? captionSpan.innerText.trim() : (meta ? meta.getAttribute("content") : ""),
                     likes_count: likes,
                     comments_count: comments,
                     media_type: mediaType,
                     _debug_text: bodyText.substring(0, 500)
                 }};
             }}""")
-            post = PostData(
+
+            dom_data_clean = {k: v for k, v in data.items() if k != "_debug_text"}
+            logger.debug("Fallback DOM extraction", extra={"dom_data": dom_data_clean})
+            return SocialPost(
+                platform=PLATFORM,
                 url=post_url,
                 caption=data["caption"],
                 timestamp=data["timestamp"],
@@ -503,16 +406,6 @@ class InstagramScraper:
                 media_type=data.get("media_type", ""),
                 user_followers=user_followers,
             )
-            dom_data_clean = {k: v for k, v in data.items() if k != "_debug_text"}
-            logger.debug(
-                f"Fallback DOM extraction",
-                extra={
-                    "dom_data": dom_data_clean,
-                    "likes": post.likes_count,
-                    "comments": post.comments_count,
-                }
-            )
-            return post
 
         except PlaywrightTimeout:
             logger.warning(f"Timeout sur {post_url}")
@@ -522,7 +415,6 @@ class InstagramScraper:
             return None
         finally:
             tab.remove_listener("response", on_response)
-            # Opt 4 : remet le tab dans le pool plutôt que de le détruire
             await tab_pool.put(tab)
 
     # ------------------------------------------------------------------
@@ -530,8 +422,6 @@ class InstagramScraper:
     # ------------------------------------------------------------------
 
     async def _dismiss_popup(self, page: Page):
-        """Ferme les popups (cookies, login) qui apparaissent au chargement."""
-        # Boucle pour gérer plusieurs popups successifs (Instagram en affiche 2)
         for attempt in range(4):
             clicked = False
             for label, selector in [("cookies", SELECTORS.COOKIE_BUTTON), ("login", SELECTORS.LOGIN_BUTTON)]:
@@ -547,12 +437,7 @@ class InstagramScraper:
                 break
 
     async def _wait_for_post_links(self, page: Page, timeout: int = TIMEOUT_PAGE_LOAD):
-        """Attend que de vrais liens de posts soient présents dans le DOM.
-        Utilise un polling evaluate() pour éviter les faux matchs CSS sur /privacy.
-
-        Raises:
-            SelectorsOutdatedError: Si aucun post trouvé après timeout
-        """
+        from exceptions import SelectorsOutdatedError
         deadline = asyncio.get_running_loop().time() + timeout / 1000
         while asyncio.get_running_loop().time() < deadline:
             count = await page.evaluate(
@@ -565,21 +450,13 @@ class InstagramScraper:
                 return
             await asyncio.sleep(SCROLL_POLL_INTERVAL)
 
-        # Aucun post trouvé - les sélecteurs sont probablement obsolètes
         await page.screenshot(path="debug_screenshot.png", full_page=False)
         logger.error("Aucun post trouvé. Les sélecteurs sont probablement obsolètes.", extra={"screenshot": "debug_screenshot.png"})
-        raise SelectorsOutdatedError("Aucun post trouvé. Instagram a probablement changé son HTML. Vérifiez les sélecteurs dans config.py")
+        raise SelectorsOutdatedError("Aucun post trouvé. Instagram a probablement changé son HTML. Vérifiez les sélecteurs dans scrapers/instagram/config.py")
 
     async def _scroll_down(self, page: Page) -> bool:
-        """Scroll la page vers le bas et attent que du contenu soit chargé.
-
-        Returns:
-            True si du contenu a été chargé, False si fin de page atteinte
-        """
         prev = await page.evaluate("document.body.scrollHeight")
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        # wait_for_function avec une string viole la CSP d'Instagram (unsafe-eval bloqué)
-        # → polling manuel via evaluate()
         deadline = asyncio.get_running_loop().time() + TIMEOUT_SCROLL / 1000
         while asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(SCROLL_POLL_INTERVAL)
