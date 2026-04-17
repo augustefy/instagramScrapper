@@ -119,12 +119,6 @@ class TikTokScraper(BaseScraper):
 
         logger.info("Scraping TikTok démarré", extra={"url": url, "target_count": n})
         posts = asyncio.run(self._scrape_async(url, n))
-
-        print("\n" + "=" * 60)
-        print("OUTPUT JSON DU SCRAPER:")
-        print("=" * 60)
-        print(json.dumps([asdict(p) for p in posts], ensure_ascii=False, indent=2))
-        print("=" * 60 + "\n")
         return posts
 
     async def _scrape_async(self, url: str, n: int) -> list[SocialPost]:

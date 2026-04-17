@@ -1,0 +1,76 @@
+"""
+Registre des plateformes : detection depuis une URL et instanciation du provider.
+"""
+
+from urllib.parse import urlparse
+
+from app.core.exceptions import UnsupportedPlatformError
+
+
+# Mapping domaine -> nom de plateforme
+_DOMAIN_MAP: dict[str, str] = {
+    "instagram.com": "instagram",
+    "www.instagram.com": "instagram",
+    "tiktok.com": "tiktok",
+    "www.tiktok.com": "tiktok",
+}
+
+
+def detect_platform(url: str) -> str:
+    """Detecte la plateforme depuis une URL.
+
+    Returns:
+        Nom de la plateforme ("instagram", "tiktok", ...)
+
+    Raises:
+        UnsupportedPlatformError: Si la plateforme n'est pas reconnue
+    """
+    try:
+        netloc = urlparse(url).netloc.lower()
+        platform = _DOMAIN_MAP.get(netloc)
+        if platform:
+            return platform
+    except Exception:
+        pass
+    raise UnsupportedPlatformError(
+        f"Plateforme non reconnue depuis l'URL : {url!r}. "
+        f"Plateformes supportees : {sorted(set(_DOMAIN_MAP.values()))}"
+    )
+
+
+def extract_username(url: str, platform: str) -> str:
+    """Extrait le username depuis une URL de profil.
+
+    Args:
+        url: URL du profil
+        platform: Nom de la plateforme
+
+    Returns:
+        Username normalise (sans @, sans trailing slash)
+    """
+    path = urlparse(url).path.strip("/")
+    # TikTok utilise @username dans l'URL
+    if platform == "tiktok":
+        path = path.lstrip("@")
+    # Prend le premier segment du path (ignore /p/xxx, /reel/xxx, etc.)
+    username = path.split("/")[0].lstrip("@")
+    return username
+
+
+def get_provider(platform: str, headless: bool = True, debug: bool = False):
+    """Instancie le provider pour une plateforme donnee.
+
+    Returns:
+        Instance de PlatformProvider
+
+    Raises:
+        UnsupportedPlatformError: Si la plateforme n'a pas de provider
+    """
+    if platform == "instagram":
+        from app.platforms.instagram.provider import InstagramProvider
+        return InstagramProvider(headless=headless, debug=debug)
+    elif platform == "tiktok":
+        from app.platforms.tiktok.provider import TikTokProvider
+        return TikTokProvider(headless=headless, debug=debug)
+    else:
+        raise UnsupportedPlatformError(f"Pas de provider pour la plateforme : {platform!r}")
