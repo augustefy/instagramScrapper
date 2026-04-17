@@ -33,3 +33,21 @@ def load_instagram_api_config() -> InstagramApiConfig:
         ig_user_id=os.getenv("IG_USER_ID", ""),
         id_page=os.getenv("ID_PAGE", ""),
     )
+
+
+@dataclass(frozen=True)
+class FacebookApiConfig:
+    page_id: str
+    access_token: str
+    graph_api_base: str = "https://graph.facebook.com/v25.0"
+
+    @property
+    def is_configured(self) -> bool:
+        return all([self.page_id, self.access_token])
+
+
+def load_facebook_api_config() -> FacebookApiConfig:
+    return FacebookApiConfig(
+        page_id=os.getenv("FB_PAGE_ID", ""),
+        access_token=os.getenv("FB_ACCESS_TOKEN", ""),
+    )

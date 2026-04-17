@@ -13,6 +13,10 @@ _DOMAIN_MAP: dict[str, str] = {
     "www.instagram.com": "instagram",
     "tiktok.com": "tiktok",
     "www.tiktok.com": "tiktok",
+    "facebook.com": "facebook",
+    "www.facebook.com": "facebook",
+    "fb.com": "facebook",
+    "www.fb.com": "facebook",
 }
 
 
@@ -72,5 +76,8 @@ def get_provider(platform: str, headless: bool = True, debug: bool = False):
     elif platform == "tiktok":
         from app.platforms.tiktok.provider import TikTokProvider
         return TikTokProvider(headless=headless, debug=debug)
+    elif platform == "facebook":
+        from app.platforms.facebook.provider import FacebookProvider
+        return FacebookProvider(headless=headless, debug=debug)
     else:
         raise UnsupportedPlatformError(f"Pas de provider pour la plateforme : {platform!r}")
