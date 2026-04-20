@@ -13,6 +13,8 @@ _DOMAIN_MAP: dict[str, str] = {
     "www.instagram.com": "instagram",
     "tiktok.com": "tiktok",
     "www.tiktok.com": "tiktok",
+    "reddit.com": "reddit",
+    "www.reddit.com": "reddit",
     "facebook.com": "facebook",
     "www.facebook.com": "facebook",
     "fb.com": "facebook",
@@ -52,13 +54,18 @@ def extract_username(url: str, platform: str) -> str:
     Returns:
         Username normalise (sans @, sans trailing slash)
     """
+    if platform == "instagram":
+        from app.platforms.instagram.url import extract_username as extract_instagram_username
+        return extract_instagram_username(url)
+    elif platform == "tiktok":
+        from app.platforms.tiktok.url import extract_username as extract_tiktok_username
+        return extract_tiktok_username(url)
+    elif platform == "reddit":
+        from app.platforms.reddit.url import extract_username as extract_reddit_username
+        return extract_reddit_username(url)
+
     path = urlparse(url).path.strip("/")
-    # TikTok utilise @username dans l'URL
-    if platform == "tiktok":
-        path = path.lstrip("@")
-    # Prend le premier segment du path (ignore /p/xxx, /reel/xxx, etc.)
-    username = path.split("/")[0].lstrip("@")
-    return username
+    return path.split("/")[0].lstrip("@")
 
 
 def get_provider(platform: str, headless: bool = True, debug: bool = False):
@@ -76,6 +83,9 @@ def get_provider(platform: str, headless: bool = True, debug: bool = False):
     elif platform == "tiktok":
         from app.platforms.tiktok.provider import TikTokProvider
         return TikTokProvider(headless=headless, debug=debug)
+    elif platform == "reddit":
+        from app.platforms.reddit.provider import RedditProvider
+        return RedditProvider(debug=debug)
     elif platform == "facebook":
         from app.platforms.facebook.provider import FacebookProvider
         return FacebookProvider(headless=headless, debug=debug)

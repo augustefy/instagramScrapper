@@ -7,9 +7,12 @@ import argparse
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Recupere les posts d'un profil social (Instagram, TikTok, ...)"
+        description="Recupere les posts d'un profil social (Instagram, TikTok, Reddit, ...)"
     )
-    parser.add_argument("url", help="URL du profil (ex: https://www.instagram.com/cristiano/)")
+    parser.add_argument(
+        "url",
+        help="URL du profil (ex: https://www.instagram.com/cristiano/ ou https://www.reddit.com/user/Terracid/)",
+    )
     parser.add_argument("n", type=int, help="Nombre de posts a recuperer")
     parser.add_argument(
         "--debug",
