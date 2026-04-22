@@ -4,12 +4,13 @@ Detecte la plateforme, extrait le username, instancie le provider, et recupere l
 """
 
 from app.core.models import FetchPostsResult
+from app.core.log import get_logger
 from app.platforms.registry import detect_platform, extract_username, get_provider
-from logging_setup import setup_logging
 
-logger = setup_logging(__name__)
+logger = get_logger(__name__)
 
 
+# ── Resolution plateforme puis delegation vers le provider adapte. ──
 def fetch_profile_posts(
     url: str,
     limit: int,
@@ -27,19 +28,19 @@ def fetch_profile_posts(
     Returns:
         FetchPostsResult avec les posts, la source, et les metadonnees
     """
-    # 1. Detection de la plateforme
+    # 1) Detecter la plateforme a partir du domaine.
     platform = detect_platform(url)
     logger.info(f"Plateforme detectee : {platform}")
 
-    # 2. Extraction du username
+    # 2) Extraire un identifiant stable pour le provider cible.
     username = extract_username(url, platform)
     logger.info(f"Username extrait : @{username}")
 
-    # 3. Instanciation du provider
+    # 3) Instancier le provider avec les options d execution courantes.
     provider = get_provider(platform, headless=headless, debug=debug)
 
     try:
-        # 4. Recuperation des posts
+        # 4) Deleguer la collecte et remonter le resultat normalise.
         result = provider.fetch_posts(username, limit)
 
         logger.info(

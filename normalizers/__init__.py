@@ -1,0 +1,3 @@
+"""
+Normalizers par plateforme.
+"""
