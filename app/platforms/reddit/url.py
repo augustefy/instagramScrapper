@@ -10,6 +10,7 @@ _VALID_HOSTS = {"reddit.com", "www.reddit.com"}
 _VALID_PREFIXES = {"user", "u"}
 
 
+# ── Extraction du username Reddit sur plusieurs formats d URL. ──
 def extract_username(url: str) -> str:
     """Extrait le username depuis une URL Reddit de profil."""
     parsed = urlparse(url)
@@ -32,5 +33,6 @@ def extract_username(url: str) -> str:
     return username
 
 
+# ── Reconstruction d une URL canonique Reddit. ──
 def build_profile_url(username: str) -> str:
     return f"https://www.reddit.com/user/{username}/"

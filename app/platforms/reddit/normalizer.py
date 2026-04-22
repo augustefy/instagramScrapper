@@ -4,6 +4,7 @@ Normalisation des donnees Reddit vers des modeles multi-plateformes.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from html import unescape
 from typing import Any
 
@@ -17,6 +18,15 @@ def _clean_text(value: Any) -> str | None:
 
     text = str(value).strip()
     return text or None
+
+
+def _to_iso_datetime(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        return datetime.fromtimestamp(float(value), tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError):
+        return None
 
 
 def _first_gallery_media_url(post_data: dict[str, Any]) -> str | None:
@@ -55,7 +65,7 @@ def detect_post_type(post_data: dict[str, Any]) -> str:
     if post_data.get("is_video") is True or ((post_data.get("media") or {}).get("reddit_video")):
         return "video"
     if post_data.get("is_gallery") is True:
-        return "gallery"
+        return "image"
     if post_data.get("post_hint") == "link":
         return "link"
     return "unknown"
@@ -86,10 +96,12 @@ def normalize_profile(
             or _clean_text(subreddit.get("description"))
             or _clean_text(about_data.get("subreddit_description"))
         ),
-        created_utc=about_data.get("created_utc"),
-        icon_img=_clean_text(subreddit.get("icon_img")) or _clean_text(about_data.get("icon_img")),
-        total_karma=about_data.get("total_karma"),
+        created_at=_to_iso_datetime(about_data.get("created_utc")),
+        profile_image_url=_clean_text(subreddit.get("icon_img")) or _clean_text(
+            about_data.get("icon_img")
+        ),
         subscribers=subreddit.get("subscribers"),
+        total_karma=about_data.get("total_karma"),
         public_metrics=public_metrics,
         raw=about_data if include_raw else None,
     )
@@ -106,44 +118,55 @@ def normalize_post(
     post_type = detect_post_type(post_data)
 
     media_url = None
+    external_links: list[str] = []
+
     if post_type == "image":
-        media_url = post_data.get("url_overridden_by_dest") or post_data.get("url")
-    elif post_type == "video":
-        media = post_data.get("media") or {}
-        secure_media = post_data.get("secure_media") or {}
-        reddit_video = (
-            media.get("reddit_video")
-            or secure_media.get("reddit_video")
-            or ((media.get("oembed") or {}).get("thumbnail_url") and {})
-        )
         media_url = (
-            (reddit_video or {}).get("fallback_url")
+            _first_gallery_media_url(post_data)
             or post_data.get("url_overridden_by_dest")
             or post_data.get("url")
         )
-    elif post_type == "gallery":
-        media_url = _first_gallery_media_url(post_data) or post_data.get("url")
+    elif post_type == "video":
+        media = post_data.get("media") or {}
+        secure_media = post_data.get("secure_media") or {}
+        reddit_video = media.get("reddit_video") or secure_media.get("reddit_video") or {}
+        media_url = (
+            reddit_video.get("fallback_url")
+            or post_data.get("url_overridden_by_dest")
+            or post_data.get("url")
+        )
     elif post_type == "link":
-        media_url = post_data.get("url_overridden_by_dest") or post_data.get("url")
-    elif post_type == "text":
         media_url = None
-    else:
-        media_url = post_data.get("url_overridden_by_dest") or post_data.get("url")
+        candidate = post_data.get("url_overridden_by_dest") or post_data.get("url")
+        if candidate:
+            external_links.append(candidate)
+
+    text = _clean_text(post_data.get("selftext")) or _clean_text(post_data.get("title"))
 
     return NormalizedPost(
         id=str(post_data.get("id") or ""),
         platform="reddit",
         author_username=username,
         post_url=full_permalink or build_profile_url(username),
-        title=_clean_text(post_data.get("title")) or "",
-        description=_clean_text(post_data.get("selftext")),
+        text=text,
+        description=text,
         type=post_type,
+        created_at=_to_iso_datetime(post_data.get("created_utc")),
+        like_count=post_data.get("score"),
+        reply_count=post_data.get("num_comments"),
+        repost_count=None,
+        quote_count=None,
+        view_count=None,
+        media_urls=[media_url] if media_url else [],
+        external_links=external_links,
+        is_sensitive=bool(post_data.get("over_18")),
+        title=_clean_text(post_data.get("title")),
         created_utc=post_data.get("created_utc"),
         score=post_data.get("score"),
         num_comments=post_data.get("num_comments"),
         subreddit=_clean_text(post_data.get("subreddit")),
         permalink=permalink,
-        url=media_url,
+        url=media_url or (external_links[0] if external_links else None),
         is_nsfw=bool(post_data.get("over_18")),
         raw=post_data if include_raw else None,
     )

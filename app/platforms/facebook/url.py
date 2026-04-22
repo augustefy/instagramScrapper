@@ -5,6 +5,7 @@ Parsing et normalisation des URLs Facebook.
 from urllib.parse import urlparse, parse_qs
 
 
+# ── Extraction du slug ou de l identifiant Facebook. ──
 def extract_username(url: str) -> str:
     """Extrait le nom de page / username depuis une URL Facebook.
 

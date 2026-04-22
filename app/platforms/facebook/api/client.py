@@ -6,11 +6,12 @@ import requests
 
 from app.core.config import FacebookApiConfig
 from app.core.exceptions import ApiUnavailableError, ApiPermissionError, ApiRateLimitError
-from logging_setup import setup_logging
+from app.core.log import get_logger
 
-logger = setup_logging(__name__)
+logger = get_logger(__name__)
 
 
+# ── Client HTTP bas niveau pour Facebook Graph. ──
 class FacebookGraphClient:
     """Client bas niveau pour l'API Facebook Graph."""
 
@@ -84,7 +85,7 @@ class FacebookGraphClient:
 
         try:
             error_data = response.json()
-        except Exception:
+        except ValueError:
             error_data = {"error": {"message": response.text}}
 
         error_info = error_data.get("error", {})
