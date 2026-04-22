@@ -12,10 +12,5 @@ venv/
 htmlcov/
 .DS_Store
 *.log
-*.png
-.playwright/
-.pytest_cache/
-.coverage
-htmlcov/
-.DS_Store
-*.log
+profiles/
+bench_results/
