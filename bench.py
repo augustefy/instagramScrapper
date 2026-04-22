@@ -1,21 +1,24 @@
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
+# ── Stockage minimal d une mesure de duree. ──
 class _Record:
     name: str
     duration: float
 
 
+# ── Collecte des timings pour les etapes critiques. ──
 class Bench:
-    def __init__(self):
+    def __init__(self) -> None:
         self._records: list[_Record] = []
         self._start = time.perf_counter()
 
     @contextmanager
-    def timer(self, name: str):
+    def timer(self, name: str) -> Iterator[None]:
         t0 = time.perf_counter()
         try:
             yield
@@ -25,7 +28,6 @@ class Bench:
     def report(self) -> str:
         total = time.perf_counter() - self._start
         col = max((len(r.name) for r in self._records), default=20) + 2
-        sep = "─" * (col + 12)
 
         lines = [
             "",

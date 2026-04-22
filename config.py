@@ -3,8 +3,6 @@ Configuration centralisée pour le scraper Instagram.
 Permet de modifier rapidement les paramètres sans toucher au code.
 """
 
-from dataclasses import dataclass
-
 # URLs
 BASE_URL = "https://www.instagram.com"
 
@@ -34,7 +32,7 @@ SCROLL_POLL_INTERVAL = 0.2  # secondes
 RESPONSE_HANDLER_WAIT = 0.5  # secondes - laisse le temps aux réponses XHR d'arriver (views, etc.)
 
 
-@dataclass
+# ── Regroupement des selecteurs Instagram historiques. ──
 class SelectorConfig:
     """Configuration des sélecteurs CSS et patterns.
 

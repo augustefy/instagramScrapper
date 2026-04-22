@@ -9,6 +9,7 @@ from exceptions import ValidationError
 from validators import validate_instagram_url, validate_post_count
 
 
+# ── Couvre les garde-fous d entree utilisateur. ──
 class TestValidators:
     """Tests des validators."""
 
@@ -62,6 +63,7 @@ class TestValidators:
             validate_post_count("10")
 
 
+# ── Verifie la structure minimale des donnees legacy. ──
 class TestPostDataStructure:
     """Tests de la structure PostData."""
 
@@ -92,6 +94,7 @@ class TestPostDataStructure:
         assert post.caption == ""
 
 
+# ── Verifie la hierarchie d exceptions legacy. ──
 class TestExceptions:
     """Tests des exceptions custom."""
 
@@ -113,6 +116,7 @@ class TestExceptions:
 # Tests d'intégration (activer avec une vrai session)
 @pytest.mark.integration
 @pytest.mark.skip(reason="Requiert une vraie connexion Instagram")
+# ── Point d integration manuel desactive par defaut. ──
 def test_scraper_can_load_instagram_profile():
     """Test que le scraper peut charger un profil réel."""
     from scraper import InstagramScraper

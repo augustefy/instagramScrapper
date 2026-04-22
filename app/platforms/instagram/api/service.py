@@ -2,25 +2,86 @@
 Service API Instagram : recupere les posts via l'API Graph et les convertit en SocialPost.
 """
 
+from app.core.health import (
+    HEALTHY,
+    NOT_CONFIGURED,
+    UNHEALTHY,
+    DataSourceHealth,
+)
 from app.core.config import InstagramApiConfig, load_instagram_api_config
-from app.core.exceptions import ApiUnavailableError, ApiPermissionError
+from app.core.exceptions import ApiError, ApiUnavailableError
+from app.core.log import get_logger
 from app.core.models import SocialPost, SocialProfile, FetchPostsResult
-from app.platforms.instagram.api.client import InstagramGraphClient
-from logging_setup import setup_logging
 
-logger = setup_logging(__name__)
+logger = get_logger(__name__)
 
 
+# ── Service de collecte Instagram via Graph API. ──
 class InstagramApiService:
     """Recuperation des posts Instagram via l'API officielle Graph."""
 
     def __init__(self, config: InstagramApiConfig | None = None):
         self._config = config or load_instagram_api_config()
-        self._client = InstagramGraphClient(self._config)
+        self._client = None
 
     @property
     def is_available(self) -> bool:
         return self._config.is_configured
+
+    def _get_client(self):
+        if self._client is None:
+            from app.platforms.instagram.api.client import InstagramGraphClient
+
+            self._client = InstagramGraphClient(self._config)
+        return self._client
+
+    def health_check(self) -> DataSourceHealth:
+        env_flags = {
+            "USER_LONG_TOKEN": bool(self._config.user_long_token),
+            "IG_USER_ID": bool(self._config.ig_user_id),
+            "APP_ID": bool(self._config.app_id),
+            "ID_PAGE": bool(self._config.id_page),
+        }
+        missing_env = [
+            name for name in ("USER_LONG_TOKEN", "IG_USER_ID") if not env_flags[name]
+        ]
+
+        if missing_env:
+            return DataSourceHealth(
+                source="api",
+                status=NOT_CONFIGURED,
+                message="API Instagram non configuree.",
+                details={
+                    "missing_env": missing_env,
+                    "configured_env": env_flags,
+                    "graph_api_base": self._config.graph_api_base,
+                },
+            )
+
+        try:
+            payload = self._get_client().probe_account()
+            return DataSourceHealth(
+                source="api",
+                status=HEALTHY,
+                message="API Instagram joignable et authentifiee.",
+                details={
+                    "configured_env": env_flags,
+                    "graph_api_base": self._config.graph_api_base,
+                    "ig_user_id": self._config.ig_user_id,
+                    "username": payload.get("username", ""),
+                },
+            )
+        except (ApiError, TypeError, ValueError) as exc:
+            return DataSourceHealth(
+                source="api",
+                status=UNHEALTHY,
+                message=f"API Instagram indisponible: {exc}",
+                details={
+                    "configured_env": env_flags,
+                    "graph_api_base": self._config.graph_api_base,
+                    "ig_user_id": self._config.ig_user_id,
+                },
+            )
 
     def fetch_posts(self, username: str, limit: int) -> FetchPostsResult:
         """Recupere les posts via business_discovery.
@@ -41,7 +102,7 @@ class InstagramApiService:
             )
 
         logger.info(f"Tentative API Instagram pour @{username} (limit={limit})")
-        raw = self._client.get_business_discovery(username, media_limit=limit)
+        raw = self._get_client().get_business_discovery(username, media_limit=limit)
 
         discovery = raw.get("business_discovery", {})
         if not discovery:
@@ -110,6 +171,6 @@ class InstagramApiService:
                 media_type=media_type,
                 user_followers=followers_count,
             )
-        except Exception as e:
+        except (AttributeError, TypeError, ValueError) as e:
             logger.debug(f"Erreur conversion post API", extra={"error": str(e)})
             return None

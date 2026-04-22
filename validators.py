@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from exceptions import ValidationError
 
 
+# ── Verification et normalisation de l URL Instagram. ──
 def validate_instagram_url(url: str) -> str:
     """Valide et normalise une URL Instagram.
 
@@ -29,7 +30,7 @@ def validate_instagram_url(url: str) -> str:
 
     try:
         parsed = urlparse(url)
-    except Exception as e:
+    except ValueError as e:
         raise ValidationError(f"URL invalide : {e}")
 
     # Accepte https://instagram.com/username ou https://www.instagram.com/username
@@ -50,6 +51,7 @@ def validate_instagram_url(url: str) -> str:
     return url
 
 
+# ── Verification de la limite demandee. ──
 def validate_post_count(n: int) -> int:
     """Valide le nombre de posts à scraper.
 

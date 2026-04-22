@@ -10,10 +10,11 @@ from exceptions import SelectorsOutdatedError, ValidationError, PageLoadError
 import logging
 
 # Logging avec JSON en production, normal en développement
-from logging_setup import setup_logging
+from app.core.log import setup_logging
 logger = setup_logging(__name__, level=logging.INFO, json_mode=False)
 
 
+# ── Scenario minimal d execution. ──
 def basic_example():
     """Exemple basique : scraper 10 posts d'un profil."""
     scraper = InstagramScraper(headless=True)
@@ -40,6 +41,7 @@ def basic_example():
         logger.error(f"Erreur inattendue : {e}")
 
 
+# ── Scenario de debug avec navigateur visible. ──
 def with_headless_false():
     """Exemple avec le navigateur visible (utile pour le débogage)."""
     scraper = InstagramScraper(headless=False)  # On voit le navigateur
@@ -54,6 +56,7 @@ def with_headless_false():
         print(f"✗ Erreur : {e}")
 
 
+# ── Scenario de traitement sur plusieurs profils. ──
 def batch_scraping():
     """Exemple : scraper plusieurs profils."""
     scraper = InstagramScraper(headless=True)

@@ -5,6 +5,7 @@ Parsing et normalisation des URLs Instagram.
 from urllib.parse import urlparse
 
 
+# ── Extraction defensive du username Instagram. ──
 def extract_username(url: str) -> str:
     """Extrait le username depuis une URL Instagram.
 
@@ -22,6 +23,7 @@ def extract_username(url: str) -> str:
     return username
 
 
+# ── Reconstruction d une URL de profil canonique. ──
 def build_profile_url(username: str) -> str:
     """Construit l'URL du profil a partir du username."""
     return f"https://www.instagram.com/{username}/"
