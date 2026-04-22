@@ -5,6 +5,7 @@ Parsing et normalisation des URLs TikTok.
 from urllib.parse import urlparse
 
 
+# ── Extraction defensive du username TikTok. ──
 def extract_username(url: str) -> str:
     """Extrait le username depuis une URL TikTok.
 

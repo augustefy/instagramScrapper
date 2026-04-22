@@ -3,6 +3,7 @@ from urllib.parse import urlparse
 from exceptions import ValidationError
 
 
+# ── Verification et normalisation de l URL TikTok. ──
 def validate_tiktok_url(url: str) -> str:
     if not isinstance(url, str):
         raise ValidationError(f"URL doit être une string, pas {type(url).__name__}")
@@ -13,7 +14,7 @@ def validate_tiktok_url(url: str) -> str:
 
     try:
         parsed = urlparse(url)
-    except Exception as e:
+    except ValueError as e:
         raise ValidationError(f"URL invalide : {e}")
 
     if parsed.netloc not in ("tiktok.com", "www.tiktok.com"):
@@ -28,6 +29,7 @@ def validate_tiktok_url(url: str) -> str:
     return url
 
 
+# ── Verification de la limite de scraping. ──
 def validate_post_count(n: int) -> int:
     if not isinstance(n, int):
         raise ValidationError(f"Nombre de posts doit être un int, pas {type(n).__name__}")

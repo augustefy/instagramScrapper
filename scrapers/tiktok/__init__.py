@@ -1,1 +1,2 @@
-from scrapers.tiktok.scraper import TikTokScraper
+from scrapers.tiktok.botasaurus_scraper import BotasaurusTikTokScraper as TikTokScraper
+from scrapers.tiktok.scraper import TikTokScraper as PlaywrightTikTokScraper
