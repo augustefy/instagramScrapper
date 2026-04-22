@@ -5,3 +5,17 @@ __pycache__/
 *.json
 .venv/
 venv/
+*.png
+.playwright/
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+*.log
+*.png
+.playwright/
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+*.log
