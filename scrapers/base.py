@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 
 @dataclass
+# ── Modele legacy partage par les scrapers historiques. ──
 class SocialPost:
     url: str
     platform: str               # "instagram", "tiktok", ...
@@ -15,11 +16,12 @@ class SocialPost:
     user_followers: int = 0
 
 
+# ── Contrat minimal pour tous les scrapers concrets. ──
 class BaseScraper(ABC):
     @abstractmethod
     def scrape(self, url: str, n: int) -> list[SocialPost]:
         """Scrape n posts depuis un profil."""
         ...
 
-    def close(self):
+    def close(self) -> None:
         pass

@@ -6,14 +6,19 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
-# Charge le .env a la racine du projet
+# ── Charger le .env du projet sans imposer python-dotenv. ──
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_PROJECT_ROOT / ".env")
 
 
 @dataclass(frozen=True)
+# ── Parametres minimaux pour l API Instagram Graph. ──
 class InstagramApiConfig:
     user_long_token: str
     app_id: str
@@ -26,6 +31,7 @@ class InstagramApiConfig:
         return all([self.user_long_token, self.ig_user_id])
 
 
+# ── Chargement tolerant de la configuration Instagram. ──
 def load_instagram_api_config() -> InstagramApiConfig:
     return InstagramApiConfig(
         user_long_token=os.getenv("USER_LONG_TOKEN", ""),
@@ -36,6 +42,7 @@ def load_instagram_api_config() -> InstagramApiConfig:
 
 
 @dataclass(frozen=True)
+# ── Parametres minimaux pour l API Facebook Graph. ──
 class FacebookApiConfig:
     page_id: str
     access_token: str
@@ -46,6 +53,7 @@ class FacebookApiConfig:
         return all([self.page_id, self.access_token])
 
 
+# ── Chargement tolerant de la configuration Facebook. ──
 def load_facebook_api_config() -> FacebookApiConfig:
     return FacebookApiConfig(
         page_id=os.getenv("FB_PAGE_ID", ""),
