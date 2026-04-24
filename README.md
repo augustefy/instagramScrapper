@@ -1,93 +1,257 @@
-# scraper-insta
+# Social Scraper API
 
+API REST asynchrone pour récupérer les posts de profils sociaux (Instagram, TikTok, Twitter/X, Reddit, Facebook).
 
+Les requêtes de scraping sont exécutées dans un **worker séparé** (RQ + Redis) pour ne jamais bloquer les workers HTTP.
 
-## Getting started
+---
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
-
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
-
-## Add your files
-
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+## Architecture
 
 ```
-cd existing_repo
-git remote add origin https://git.rei.ms/smartfluence/scraper-insta.git
-git branch -M main
-git push -uf origin main
+POST /v1/scrapes
+      │
+      ▼
+  FastAPI API ──enqueue──▶ Redis Queue ──pick──▶ RQ Worker
+      │                                               │
+      │◀────── job_id ─────────────────────────────── │
+      │                                          fetch_profile_posts()
+      │                                               │
+GET /v1/scrapes/{id}/result ◀── résultat stocké Redis ◀┘
 ```
 
-## Integrate with your tools
+**Stack**
+- FastAPI + Uvicorn (API HTTP)
+- RQ + Redis (job queue + cache + rate limiting)
+- Playwright / Botasaurus (scraping)
+- Pydantic Settings (configuration)
+- slowapi (rate limiting)
 
-- [ ] [Set up project integrations](https://git.rei.ms/smartfluence/scraper-insta/-/settings/integrations)
+---
 
-## Collaborate with your team
+## Setup rapide
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+### Option A — Docker (recommandé)
 
-## Test and Deploy
+```bash
+cp .env.example .env
+# Éditer .env avec vos clés API et credentials
 
-Use the built-in continuous integration in GitLab.
+docker compose up --build
+```
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+L'API est disponible sur `http://localhost:8000`.
 
-***
+Pour lancer aussi le dashboard RQ :
+```bash
+docker compose --profile dev up
+# Dashboard RQ : http://localhost:9181
+```
 
-# Editing this README
+### Option B — Local
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+**Prérequis** : Python 3.12+, Redis lancé localement.
 
-## Suggestions for a good README
+```bash
+# 1. Créer le virtualenv et installer les dépendances
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+playwright install chromium
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+# 2. Configurer l'environnement
+cp .env.example .env
+# Éditer .env
 
-## Name
-Choose a self-explaining name for your project.
+# 3. Lancer l'API
+uvicorn api.main:app --reload
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+# 4. Lancer le worker (dans un autre terminal)
+python -m worker.run
+```
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+---
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+## Authentification
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+Toutes les routes (sauf `/health`) nécessitent le header `X-API-Key`.
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Configurer les clés dans `.env` :
+```
+API_KEYS=ma-cle-secrete,deuxieme-cle
+```
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Les clés sont comparées via SHA-256 — elles ne transitent jamais en clair côté serveur.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+**Auth désactivée** si `API_KEYS` est vide (mode développement uniquement).
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+---
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+## Utilisation
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+### 1. Lancer un scrape
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```bash
+curl -X POST http://localhost:8000/v1/scrapes \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ma-cle-secrete" \
+  -d '{"url": "https://www.instagram.com/cristiano/", "limit": 10}'
+```
 
-## License
-For open source projects, say how it is licensed.
+Réponse `202 Accepted` :
+```json
+{
+  "job_id": "d4f8a2b1-...",
+  "status": "queued"
+}
+```
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+Si le résultat est en cache, `status` vaut immédiatement `"done"`.
+
+### 2. Vérifier le statut
+
+```bash
+curl http://localhost:8000/v1/scrapes/d4f8a2b1-... \
+  -H "X-API-Key: ma-cle-secrete"
+```
+
+```json
+{
+  "job_id": "d4f8a2b1-...",
+  "status": "running"
+}
+```
+
+Statuts possibles : `queued` | `running` | `done` | `failed`
+
+### 3. Récupérer le résultat
+
+```bash
+curl http://localhost:8000/v1/scrapes/d4f8a2b1-.../result \
+  -H "X-API-Key: ma-cle-secrete"
+```
+
+```json
+{
+  "job_id": "d4f8a2b1-...",
+  "status": "done",
+  "result": {
+    "profile": { "username": "cristiano", "platform": "instagram" },
+    "posts": [
+      {
+        "id": "...",
+        "platform": "instagram",
+        "post_url": "https://www.instagram.com/p/...",
+        "text": "...",
+        "like_count": 12345678,
+        "type": "image",
+        "created_at": "2024-01-15T10:30:00"
+      }
+    ]
+  }
+}
+```
+
+### 4. Health check
+
+```bash
+curl http://localhost:8000/health
+```
+
+```json
+{ "status": "ok", "checks": { "api": "ok", "redis": "ok" } }
+```
+
+### Boucle de polling complète (bash)
+
+```bash
+KEY="ma-cle-secrete"
+BASE="http://localhost:8000"
+
+JOB_ID=$(curl -s -X POST $BASE/v1/scrapes \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: $KEY" \
+  -d '{"url": "https://x.com/elonmusk", "limit": 5}' | jq -r .job_id)
+
+echo "Job lancé : $JOB_ID"
+
+while true; do
+  STATUS=$(curl -s $BASE/v1/scrapes/$JOB_ID -H "X-API-Key: $KEY" | jq -r .status)
+  echo "  → $STATUS"
+  [ "$STATUS" = "done" ] || [ "$STATUS" = "failed" ] && break
+  sleep 3
+done
+
+curl -s $BASE/v1/scrapes/$JOB_ID/result -H "X-API-Key: $KEY" | jq .
+```
+
+---
+
+## Plateformes supportées
+
+| Plateforme | URL exemple | Source primaire | Fallback |
+|------------|-------------|-----------------|---------|
+| Instagram  | `https://www.instagram.com/username/` | Graph API | Playwright |
+| TikTok     | `https://www.tiktok.com/@username` | Botasaurus | — |
+| Twitter/X  | `https://x.com/username` | Guest API | — |
+| Reddit     | `https://www.reddit.com/user/username/` | Public API | — |
+| Facebook   | `https://www.facebook.com/pagename` | Graph API | — |
+
+---
+
+## Variables d'environnement
+
+| Variable | Défaut | Description |
+|----------|--------|-------------|
+| `API_KEYS` | `""` | Clés API séparées par virgules (vide = auth off) |
+| `REDIS_URL` | `redis://localhost:6379/0` | URL Redis |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Requêtes/min par clé |
+| `CACHE_TTL` | `600` | TTL cache Redis (secondes) |
+| `JOB_TIMEOUT` | `300` | Timeout scraping (secondes) |
+| `JOB_RESULT_TTL` | `3600` | Rétention résultats (secondes) |
+| `SCRAPER_HEADLESS` | `true` | Mode headless Playwright |
+| `LOG_JSON` | `true` | Logs JSON structurés |
+| `DEBUG` | `false` | Mode debug |
+
+---
+
+## Documentation interactive
+
+- Swagger UI : `http://localhost:8000/docs`
+- ReDoc : `http://localhost:8000/redoc`
+
+---
+
+## Structure du projet
+
+```
+api/
+  config.py        Pydantic Settings (env vars)
+  deps.py          Dépendances FastAPI (auth, Redis, rate limit)
+  errors.py        Handlers exceptions → codes HTTP
+  main.py          Factory app FastAPI
+  schemas.py       Modèles Pydantic request/response
+  routes/
+    health.py      GET /health
+    scrapes.py     POST + GET /v1/scrapes
+
+worker/
+  tasks.py         Tâche RQ : run_scrape_job()
+
+app/               Logique métier (inchangée)
+  core/            config, exceptions, health, log, models
+  platforms/       Providers par plateforme (API + scraper)
+  services/        social_resolver, health, bench
+
+scrapers/          Couches Playwright / Botasaurus
+models/            NormalizedPost, NormalizedProfile
+```
+
+---
+
+## CLI (usage direct, préservé)
+
+```bash
+python main.py https://www.instagram.com/cristiano/ 10 --debug
+python main.py --health
+```
