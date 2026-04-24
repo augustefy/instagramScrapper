@@ -1,0 +1,83 @@
+services:
+
+  # ── Infrastructure ────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-scraper}
+      POSTGRES_USER: ${POSTGRES_USER:-scraper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scraper}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-scraper}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── API FastAPI ────────────────────────────────────────────────────────
+  api:
+    build: .
+    restart: unless-stopped
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./.playwright:/app/.playwright  # session Playwright persistée
+
+  # ── Worker RQ ─────────────────────────────────────────────────────────
+  worker:
+    build: .
+    restart: unless-stopped
+    command: rq worker scrapes --url redis://redis:6379/0
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./.playwright:/app/.playwright  # même session que l'api
+    # Le worker a besoin d'un display virtuel pour Playwright non-headless
+    # En production, headless=true donc pas besoin de Xvfb
+
+  # ── Dashboard RQ (optionnel, à désactiver en prod) ───────────────────
+  rq-dashboard:
+    image: eoranged/rq-dashboard
+    restart: unless-stopped
+    ports:
+      - "9181:9181"
+    environment:
+      - RQ_DASHBOARD_REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    profiles:
+      - dev  # lancé uniquement avec --profile dev
+
+volumes:
+  redis_data:
+  postgres_data:

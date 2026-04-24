@@ -1,0 +1,32 @@
+[tool.pytest.ini_options]
+addopts = [
+  "--cov=app",
+  "--cov=models",
+  "--cov=normalizers",
+  "--cov=scrapers",
+  "--cov=utils",
+  "--cov-report=term-missing",
+]
+markers = [
+  "integration: tests that need live platform access or a real browser session",
+]
+testpaths = ["."]
+python_files = ["test_*.py"]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "models", "normalizers", "scrapers", "utils"]
+omit = [
+  "*/__init__.py",
+  "test_*.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+  "raise NotImplementedError",
+  "\\.\\.\\.",
+]

@@ -1,16 +1,45 @@
+# Environnement local
 .env
+.env.*
+!.env.example
 .direnv/
-__pycache__/
-*.pyc
-*.json
 .venv/
 venv/
-*.png
-.playwright/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
 .pytest_cache/
-.coverage
-htmlcov/
+
+# IDE / OS
+.idea/
+.vscode/
 .DS_Store
+
+# Sorties runtime
 *.log
-profiles/
+*.tmp
+output*.json
+results*.json
 bench_results/
+profiles/
+.playwright/
+
+# Couverture / rapports de tests
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit.xml
+
+# Captures de debug generees par les scrapers
+debug_*.png
+debug_*.jpg
+debug_*.jpeg
+screenshots/
+
+# Docker
+docker-compose.override.yml
