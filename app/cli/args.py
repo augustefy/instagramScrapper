@@ -59,7 +59,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
 
-    # 2) Interdire le mode collecte incomplet hors healthcheck / setup-session.
+    # 2) Autoriser `python main.py --health N` : si le 1er positionnel est entier,
+    #    le promouvoir en limite de benchmark plutot que de l interpreter en URL.
+    if args.health and args.n is None and args.url is not None:
+        try:
+            args.n = int(args.url)
+            args.url = None
+        except ValueError:
+            pass
+
+    # 3) Interdire le mode collecte incomplet hors healthcheck / setup-session.
     if not args.health and not args.setup_tiktok_session and (args.url is None or args.n is None):
         parser.error("url et n sont obligatoires sauf avec --health ou --setup-tiktok-session")
 

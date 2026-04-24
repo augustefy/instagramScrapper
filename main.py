@@ -15,37 +15,65 @@ Exemples :
 import json
 import logging
 import sys
+from typing import Any
 
 from app.cli.args import parse_args
-from app.core.exceptions import InvalidLimitError
-from app.core.health import HEALTHY
+from app.core.exceptions import (
+    ApiError,
+    InvalidLimitError,
+    InvalidUrlError,
+    ScraperError,
+    UnsupportedPlatformError,
+)
+from app.core.health import HEALTHY, HealthReport
+from app.core.log import emit_console, setup_logging
+from app.services.bench import (
+    DEFAULT_BENCH_LIMIT,
+    BenchReport,
+    ServiceBenchResult,
+    benchmark_data_sources,
+)
 from app.services.health import check_data_sources
 from app.services.social_resolver import fetch_profile_posts
-from app.core.log import setup_logging
 
 
 _ANSI_RESET = "\033[0m"
 _ANSI_GREEN = "\033[32m"
 _ANSI_RED = "\033[31m"
 _ANSI_YELLOW = "\033[33m"
+_CLI_ERROR_TYPES = (
+    ApiError,
+    InvalidLimitError,
+    InvalidUrlError,
+    ScraperError,
+    UnsupportedPlatformError,
+    RuntimeError,
+    OSError,
+    ValueError,
+)
 
 
 # ── Serialisation finale et sortie console. ──
-def _dump_payload(payload: dict, output: str | None, label: str, logger: logging.Logger) -> None:
+def _dump_payload(
+    payload: dict[str, Any],
+    output: str | None,
+    label: str,
+    logger: logging.Logger,
+) -> None:
     if output:
         with open(output, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
-        logger.info(f"Sauvegarde dans {output}")
+        logger.info("Sauvegarde dans %s", output)
 
-    print("\n" + "=" * 60)
-    print(f"OUTPUT JSON ({label}):")
-    print("=" * 60)
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
-    print("=" * 60)
+    emit_console("\n" + "=" * 60)
+    emit_console(f"OUTPUT JSON ({label}):")
+    emit_console("=" * 60)
+    emit_console(json.dumps(payload, ensure_ascii=False, indent=2))
+    emit_console("=" * 60)
 
 
 # ── Journalisation detaillee du rapport de sante. ──
-def _log_health_report(report, logger: logging.Logger) -> None:
+def _log_health_report(report: HealthReport, logger: logging.Logger) -> None:
     logger.info("")
     logger.info("=" * 60)
     logger.info(f"Health     : {report.status.upper()}")
@@ -61,7 +89,7 @@ def _log_health_report(report, logger: logging.Logger) -> None:
 
 
 # ── Construction des lignes de synthese compactes. ──
-def _format_health_summary_lines(report) -> list[str]:
+def _format_health_summary_lines(report: HealthReport) -> list[str]:
     use_color = sys.stdout.isatty()
     lines = []
 
@@ -100,10 +128,73 @@ def _colorize_status(label: str, status: str, use_color: bool) -> str:
 
 
 # ── Emission de la synthese lisible en fin de controle. ──
-def _print_health_summary(report) -> None:
-    print("\nSynthese :")
+def _print_health_summary(report: HealthReport) -> None:
+    emit_console("\nSynthese :")
     for line in _format_health_summary_lines(report):
-        print(line)
+        emit_console(line)
+
+
+# ── Tableau de benchmark pour --health. ───────────────────────────────
+def _format_bench_table_lines(bench: BenchReport) -> list[str]:
+    use_color = sys.stdout.isatty()
+
+    src_width = max((len(r.source_label) for r in bench.services), default=4)
+    src_width = max(src_width, len("Type"))
+    plat_width = max((len(r.platform_label) for r in bench.services), default=10)
+    plat_width = max(plat_width, len("Plateforme"))
+    time_width = max(len("Duree"), 8)
+
+    header = (
+        f"|| {'Up?':<3} "
+        f"|| {'Type':<{src_width}} "
+        f"|| {'Plateforme':<{plat_width}} "
+        f"|| {'Duree':>{time_width}} ||"
+    )
+    separator = (
+        f"||{'-' * 5}"
+        f"||{'-' * (src_width + 2)}"
+        f"||{'-' * (plat_width + 2)}"
+        f"||{'-' * (time_width + 2)}||"
+    )
+
+    lines = [header, separator]
+    for result in bench.services:
+        status_raw = "OK" if result.ok else "KO"
+        status_label = _colorize_status(
+            f"{status_raw:<3}", HEALTHY if result.ok else "unhealthy", use_color
+        )
+        duration = f"{result.duration_s:.2f}s"
+        lines.append(
+            f"|| {status_label} "
+            f"|| {result.source_label:<{src_width}} "
+            f"|| {result.platform_label:<{plat_width}} "
+            f"|| {duration:>{time_width}} ||"
+        )
+    return lines
+
+
+def _log_bench_failures(
+    bench: BenchReport,
+    logger: logging.Logger,
+) -> None:
+    failures: list[ServiceBenchResult] = [r for r in bench.services if not r.ok]
+    if not failures:
+        return
+    logger.info("")
+    logger.info("Echecs detailles :")
+    for result in failures:
+        logger.info(
+            f"  - {result.source_label:<9} {result.platform_label:<10} "
+            f"@{result.username} : {result.message or 'echec sans message'}"
+        )
+
+
+def _print_bench_table(bench: BenchReport) -> None:
+    emit_console(
+        f"\nBenchmark (limit={bench.limit} post(s) par service) :"
+    )
+    for line in _format_bench_table_lines(bench):
+        emit_console(line)
 
 
 # ── Orchestration CLI: mode health ou collecte des posts. ──
@@ -138,11 +229,32 @@ def main() -> None:
                 headless=not args.no_headless,
                 debug=args.debug,
             )
-            payload = report.to_dict()
             _log_health_report(report, logger)
+
+            # Benchmark : mesure la duree reelle d un fetch de N posts par service.
+            bench_limit = args.n if args.n is not None else DEFAULT_BENCH_LIMIT
+            logger.info("")
+            logger.info(
+                f"Benchmark de {bench_limit} post(s) par service..."
+            )
+            bench_report = benchmark_data_sources(
+                limit=bench_limit,
+                headless=not args.no_headless,
+                debug=args.debug,
+            )
+            _log_bench_failures(bench_report, logger)
+
+            # Sortie combinee : health classique + benchmark pour l export.
+            payload = {
+                "health": report.to_dict(),
+                "bench": bench_report.to_dict(),
+            }
             _dump_payload(payload, args.output, "HEALTH", logger)
             _print_health_summary(report)
-            if report.status == "unhealthy":
+            _print_bench_table(bench_report)
+
+            any_bench_ko = any(not r.ok for r in bench_report.services)
+            if report.status == "unhealthy" or any_bench_ko:
                 sys.exit(1)
             return
 
@@ -167,7 +279,7 @@ def main() -> None:
             debug=args.debug,
         )
         payload = result.to_dict()
-    except Exception as e:
+    except _CLI_ERROR_TYPES as e:
         if args.debug:
             logger.exception(f"Erreur fatale : {e}")
         else:
