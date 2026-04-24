@@ -74,15 +74,13 @@ class BotasaurusTikTokScraper(BaseScraper):
     def health_check(self) -> dict:
         driver = self._make_driver(headless=self.headless)
         try:
-            response_info = {}
             driver.get(BASE_URL, bypass_cloudflare=False)
-            driver.short_random_sleep()
             return {
                 "engine": "botasaurus",
                 "headless": self.headless,
                 "target_url": BASE_URL,
-                "page_title": driver.title(),
-                "current_url": driver.current_url(),
+                "page_title": driver.title,
+                "current_url": driver.current_url,
             }
         except Exception as e:
             return {"engine": "botasaurus", "error": str(e)}
