@@ -368,8 +368,6 @@ class TikTokScraper(BaseScraper):
 
         for px, py in points:
             await page.mouse.move(px, py)
-            if random.random() < 0.08:  # micro-pause mid-trajectory
-                await asyncio.sleep(_gaussian_delay(0.02, 0.08))
 
         return (x, y)
 
@@ -836,10 +834,6 @@ class TikTokScraper(BaseScraper):
         for i in range(steps):
             chunk = random.randint(int(vw["height"] * 0.4), int(vw["height"] * 0.9))
             await page.mouse.wheel(0, chunk)
-            await asyncio.sleep(_gaussian_delay(0.15, 0.45))
-
-        # Short micro-pause before checking if new content appeared
-        await asyncio.sleep(_gaussian_delay(0.4, 0.9))
 
         deadline = asyncio.get_running_loop().time() + TIMEOUT_SCROLL / 1000
         while asyncio.get_running_loop().time() < deadline:

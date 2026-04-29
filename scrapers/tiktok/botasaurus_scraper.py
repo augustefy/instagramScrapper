@@ -104,7 +104,6 @@ class BotasaurusTikTokScraper(BaseScraper):
         driver = self._make_driver(headless=False)
         try:
             driver.get(BASE_URL)
-            driver.long_random_sleep()
             self._dismiss_popups(driver)
             print(f"\nAttente de {wait_seconds}s... (fermez Chrome manuellement pour arrêter plus tôt)")
             time.sleep(wait_seconds)
@@ -184,7 +183,6 @@ class BotasaurusTikTokScraper(BaseScraper):
                 except Exception as e:
                     raise PageLoadError(f"Impossible de charger {url}: {e}") from e
 
-            driver.long_random_sleep()
             self._dismiss_popups(driver)
             self._wait_for_profile_ready(driver)
 
@@ -217,7 +215,7 @@ class BotasaurusTikTokScraper(BaseScraper):
                 if not api_items:
                     logger.info("Scroll pour déclencher les appels API...")
                     self._human_scroll(driver, partial=True)
-                    driver.short_random_sleep()
+                    # driver.short_random_sleep()
                     # Collect newly registered request_ids
                     for req_id in api_request_ids:
                         if req_id in [r for r in api_request_ids]:
@@ -499,7 +497,7 @@ class BotasaurusTikTokScraper(BaseScraper):
         video_url = href if href.startswith("http") else f"{BASE_URL}{href}"
         try:
             driver.get(video_url)
-            driver.short_random_sleep()
+            # driver.short_random_sleep()
 
             data = driver.run_js(r"""
                 function parseNum(t) {
