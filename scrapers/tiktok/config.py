@@ -89,11 +89,11 @@ EXTRA_HTTP_HEADERS = {
 }
 
 # ── Timing (seconds unless noted). ──
-POPUP_DISMISS_WAIT = 1.2
+POPUP_DISMISS_WAIT = 0.0
 SCROLL_POLL_INTERVAL = 0.35
-RESPONSE_HANDLER_WAIT = 1.2
-FIRST_POST_EXTRA_WAIT = 2.5
-VIDEO_RETRY_BACKOFF = 1.5
+RESPONSE_HANDLER_WAIT = 0.0
+FIRST_POST_EXTRA_WAIT = 0.0
+VIDEO_RETRY_BACKOFF = 0.0
 
 # Human-like random delay ranges (uniform bounds fed into gaussian jitter)
 # `y` = HUMAN_DELAY_MAX is the knob we benchmark. Overridable via env for tuning.
@@ -113,10 +113,10 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-HUMAN_DELAY_MIN = _env_float("TIKTOK_DELAY_MIN", 0.4)
-HUMAN_DELAY_MAX = _env_float("TIKTOK_DELAY_MAX", 1.4)
-HUMAN_LONG_DELAY_MIN = _env_float("TIKTOK_LONG_DELAY_MIN", 1.5)
-HUMAN_LONG_DELAY_MAX = _env_float("TIKTOK_LONG_DELAY_MAX", 3.2)
+HUMAN_DELAY_MIN = _env_float("TIKTOK_DELAY_MIN", 0.0)
+HUMAN_DELAY_MAX = _env_float("TIKTOK_DELAY_MAX", 1.0)
+HUMAN_LONG_DELAY_MIN = _env_float("TIKTOK_LONG_DELAY_MIN", 0.0)
+HUMAN_LONG_DELAY_MAX = _env_float("TIKTOK_LONG_DELAY_MAX", 1.0)
 
 # Keep min ≤ max to avoid gaussian_delay clamping edge cases
 if HUMAN_DELAY_MIN > HUMAN_DELAY_MAX:
@@ -126,8 +126,8 @@ if HUMAN_LONG_DELAY_MIN > HUMAN_LONG_DELAY_MAX:
 
 # Reading pause: proportional to content length (chars → seconds)
 READING_CHARS_PER_SECOND = 250
-READING_PAUSE_MIN = 0.8
-READING_PAUSE_MAX = 6.0
+READING_PAUSE_MIN = 0.0
+READING_PAUSE_MAX = 0.0
 
 # ── 429 / rate-limit backoff. ──
 RATE_LIMIT_BACKOFF_BASE = 5.0    # seconds for first 429
